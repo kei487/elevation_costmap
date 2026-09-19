@@ -1,0 +1,47 @@
+elevation_costmap_node:
+  ros__parameters:
+    # Frames / topics
+    target_frame: base_link
+    cloud_topic: /livox/lidar
+    costmap_topic: /local_costmap/costmap_raw
+
+    # Dual-resolution grid (req. §3)
+    map_size: 4.0
+    sub_resolution: 0.05
+    plan_resolution: 0.15
+
+    # Cost function (req. §4.3)
+    delta_h_min: 0.03
+    delta_h_max: 0.15
+    cost_gain: 99.0
+    lethal_cost: 100
+
+    # Missing-cell fill (req. §4.4)
+    temporal_decay: 0.85
+    unobserved_margin_cost: 50.0
+
+    # Slope vs step separation (req. §4.2)
+    enable_slope_correction: true
+    slope_allow_deg: 12.0
+    min_points_per_cell: 2
+
+    # ROI filter (req. §4.1)
+    roi:
+      x_min: -2.0
+      x_max: 2.0
+      y_min: -2.0
+      y_max: 2.0
+      z_ground_min: -0.5
+      z_robot_height: 1.5
+
+    # Robot body / mount self-filter AABB in target_frame
+    self_filter:
+      enable: true
+      x_min: -0.35
+      x_max: 0.35
+      y_min: -0.25
+      y_max: 0.25
+      z_min: -0.1
+      z_max: 0.6
+
+    tf_timeout_sec: 0.05
