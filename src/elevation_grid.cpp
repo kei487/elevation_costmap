@@ -306,4 +306,55 @@ const std::vector<int8_t> & ElevationGrid::update(const std::vector<PointXYZ> & 
   return plan_costs_;
 }
 
+void ElevationGrid::fillLaserScanRanges(
+  std::vector<float> & ranges,
+  double angle_min,
+  double angle_increment,
+  double range_min,
+  double range_max) const
+{
+  if (ranges.empty() || angle_increment <= 0.0) {
+    return;
+  }
+
+  const float init_r = static_cast<float>(range_max + 1.0);
+  std::fill(ranges.begin(), ranges.end(), init_r);
+
+  const float dh_max = static_cast<float>(config_.delta_h_max);
+  const float res = static_cast<float>(config_.sub_resolution);
+  const float ox = static_cast<float>(origin_x_);
+  const float oy = static_cast<float>(origin_y_);
+  const int n_beams = static_cast<int>(ranges.size());
+  const float r_min = static_cast<float>(range_min);
+  const float r_max = static_cast<float>(range_max);
+
+  for (int v = 0; v < sub_height_; ++v) {
+    for (int u = 0; u < sub_width_; ++u) {
+      const std::size_t idx = static_cast<std::size_t>(v * sub_width_ + u);
+      if (!sub_observed_[idx] || sub_delta_h_[idx] <= dh_max) {
+        continue;
+      }
+
+      const float xc = ox + (static_cast<float>(u) + 0.5f) * res;
+      const float yc = oy + (static_cast<float>(v) + 0.5f) * res;
+      const float r = std::sqrt(xc * xc + yc * yc);
+      if (r < r_min || r > r_max) {
+        continue;
+      }
+
+      const float phi = std::atan2(yc, xc);
+      int k = static_cast<int>(std::floor((phi - angle_min) / angle_increment));
+      if (k < 0 || k >= n_beams) {
+        // Wrap φ == angle_max onto the last bin when spanning a full circle.
+        if (k == n_beams && std::fabs(phi - (angle_min + n_beams * angle_increment)) < 1e-5) {
+          k = 0;
+        } else {
+          continue;
+        }
+      }
+      ranges[static_cast<std::size_t>(k)] = std::min(ranges[static_cast<std::size_t>(k)], r);
+    }
+  }
+}
+
 }  // namespace elevation_costmap

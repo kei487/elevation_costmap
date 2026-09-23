@@ -4,9 +4,9 @@
   <name>elevation_costmap</name>
   <version>0.1.0</version>
   <description>
-    Mid-360 elevation costmap generator for 2.5D local planning.
-    Extracts height difference (delta-h) from point clouds and publishes
-    a rolling OccupancyGrid for value-iteration planners.
+    Mid-360 elevation obstacle detector. Extracts height difference (delta-h)
+    from point clouds and publishes a pseudo LaserScan (/scan) of impassable
+    step/obstacle cells for 2D avoidance layers and planners.
   </description>
   <maintainer email="developer@todo.todo">developer</maintainer>
   <license>Apache-2.0</license>

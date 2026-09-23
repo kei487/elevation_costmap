@@ -59,10 +59,15 @@ ElevationCostmapNode::ElevationCostmapNode()
   loadParameters();
   grid_.setConfig(grid_config_);
 
+  const double angle_increment = angle_increment_deg_ * M_PI / 180.0;
+  const int n_beams = std::max(
+    1, static_cast<int>(std::lround((angle_max_ - angle_min_) / angle_increment)));
+  scan_ranges_.assign(static_cast<std::size_t>(n_beams), 0.f);
+
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-  costmap_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>(costmap_topic_, rclcpp::QoS(1));
+  scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>(scan_topic_, rclcpp::QoS(1));
 
   const auto sensor_qos = rclcpp::SensorDataQoS();
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -71,18 +76,19 @@ ElevationCostmapNode::ElevationCostmapNode()
 
   RCLCPP_INFO(
     get_logger(),
-    "elevation_costmap ready: cloud='%s' -> '%s' frame='%s' "
-    "sub=%.2fm (%dx%d) plan=%.2fm (%dx%d)",
-    cloud_topic_.c_str(), costmap_topic_.c_str(), target_frame_.c_str(),
-    grid_config_.sub_resolution, grid_.subWidth(), grid_.subHeight(),
-    grid_config_.plan_resolution, grid_.planWidth(), grid_.planHeight());
+    "elevation_costmap ready: cloud='%s' -> scan='%s' frame='%s' "
+    "grid=%.2fm @ %.2fm (%dx%d) beams=%d angle_inc=%.2fdeg",
+    cloud_topic_.c_str(), scan_topic_.c_str(), target_frame_.c_str(),
+    grid_config_.map_size, grid_config_.sub_resolution,
+    grid_.subWidth(), grid_.subHeight(),
+    n_beams, angle_increment_deg_);
 }
 
 void ElevationCostmapNode::declareParameters()
 {
   declare_parameter<std::string>("target_frame", "base_link");
   declare_parameter<std::string>("cloud_topic", "/livox/lidar");
-  declare_parameter<std::string>("costmap_topic", "/local_costmap/costmap_raw");
+  declare_parameter<std::string>("scan_topic", "/scan");
 
   declare_parameter<double>("map_size", 4.0);
   declare_parameter<double>("sub_resolution", 0.05);
@@ -95,7 +101,13 @@ void ElevationCostmapNode::declareParameters()
   declare_parameter<double>("unobserved_margin_cost", 50.0);
   declare_parameter<bool>("enable_slope_correction", true);
   declare_parameter<double>("slope_allow_deg", 12.0);
-  declare_parameter<int>("min_points_per_cell", 2);
+  declare_parameter<int>("min_points_per_cell", 3);
+
+  declare_parameter<double>("scan.angle_min", -M_PI);
+  declare_parameter<double>("scan.angle_max", M_PI);
+  declare_parameter<double>("scan.angle_increment_deg", 1.0);
+  declare_parameter<double>("scan.range_min", 0.1);
+  declare_parameter<double>("scan.range_max", 2.83);
 
   declare_parameter<double>("roi.x_min", -2.0);
   declare_parameter<double>("roi.x_max", 2.0);
@@ -119,7 +131,7 @@ void ElevationCostmapNode::loadParameters()
 {
   target_frame_ = get_parameter("target_frame").as_string();
   cloud_topic_ = get_parameter("cloud_topic").as_string();
-  costmap_topic_ = get_parameter("costmap_topic").as_string();
+  scan_topic_ = get_parameter("scan_topic").as_string();
 
   grid_config_.map_size = get_parameter("map_size").as_double();
   grid_config_.sub_resolution = get_parameter("sub_resolution").as_double();
@@ -137,6 +149,12 @@ void ElevationCostmapNode::loadParameters()
   grid_config_.slope_allow_deg = get_parameter("slope_allow_deg").as_double();
   grid_config_.min_points_per_cell =
     static_cast<int>(get_parameter("min_points_per_cell").as_int());
+
+  angle_min_ = get_parameter("scan.angle_min").as_double();
+  angle_max_ = get_parameter("scan.angle_max").as_double();
+  angle_increment_deg_ = get_parameter("scan.angle_increment_deg").as_double();
+  range_min_ = get_parameter("scan.range_min").as_double();
+  range_max_ = get_parameter("scan.range_max").as_double();
 
   roi_x_min_ = get_parameter("roi.x_min").as_double();
   roi_x_max_ = get_parameter("roi.x_max").as_double();
@@ -168,20 +186,20 @@ void ElevationCostmapNode::cloudCallback(const sensor_msgs::msg::PointCloud2::Sh
   {
     std::lock_guard<std::mutex> lock(mutex_);
     grid_.update(points);
-    publishCostmap(msg->header.stamp);
+    publishScan(msg->header.stamp);
     ++processed_clouds_;
   }
 
   const auto dt_ms = std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - t0).count();
-  if (dt_ms > 30.0) {
+  if (dt_ms > 15.0) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000,
-      "costmap update took %.1f ms (> 30 ms target), points=%zu",
+      "scan update took %.1f ms (> 15 ms target), points=%zu",
       dt_ms, points.size());
   } else {
     RCLCPP_DEBUG(
-      get_logger(), "costmap update %.1f ms, points=%zu", dt_ms, points.size());
+      get_logger(), "scan update %.1f ms, points=%zu", dt_ms, points.size());
   }
 }
 
@@ -262,20 +280,25 @@ void ElevationCostmapNode::filterAndExtract(
   }
 }
 
-void ElevationCostmapNode::publishCostmap(const rclcpp::Time & stamp)
+void ElevationCostmapNode::publishScan(const rclcpp::Time & stamp)
 {
-  nav_msgs::msg::OccupancyGrid grid_msg;
-  grid_msg.header.stamp = stamp;
-  grid_msg.header.frame_id = target_frame_;
-  grid_msg.info.resolution = static_cast<float>(grid_config_.plan_resolution);
-  grid_msg.info.width = static_cast<uint32_t>(grid_.planWidth());
-  grid_msg.info.height = static_cast<uint32_t>(grid_.planHeight());
-  grid_msg.info.origin.position.x = grid_.originX();
-  grid_msg.info.origin.position.y = grid_.originY();
-  grid_msg.info.origin.position.z = 0.0;
-  grid_msg.info.origin.orientation.w = 1.0;
-  grid_msg.data = grid_.planCosts();
-  costmap_pub_->publish(grid_msg);
+  const double angle_increment = angle_increment_deg_ * M_PI / 180.0;
+
+  grid_.fillLaserScanRanges(
+    scan_ranges_, angle_min_, angle_increment, range_min_, range_max_);
+
+  sensor_msgs::msg::LaserScan scan;
+  scan.header.stamp = stamp;
+  scan.header.frame_id = target_frame_;
+  scan.angle_min = static_cast<float>(angle_min_);
+  scan.angle_max = static_cast<float>(angle_max_);
+  scan.angle_increment = static_cast<float>(angle_increment);
+  scan.time_increment = 0.f;
+  scan.scan_time = 0.f;
+  scan.range_min = static_cast<float>(range_min_);
+  scan.range_max = static_cast<float>(range_max_);
+  scan.ranges = scan_ranges_;
+  scan_pub_->publish(scan);
 }
 
 }  // namespace elevation_costmap

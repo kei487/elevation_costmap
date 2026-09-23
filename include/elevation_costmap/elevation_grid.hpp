@@ -62,6 +62,19 @@ public:
 
   const std::vector<int8_t> & planCosts() const { return plan_costs_; }
 
+  /**
+   * @brief Build LaserScan ranges from obstacle cells (Δh > delta_h_max).
+   *
+   * Obstacle cell centers are projected to polar (r, φ); each beam keeps the
+   * nearest range. Unhit beams are left as range_max + 1.0.
+   */
+  void fillLaserScanRanges(
+    std::vector<float> & ranges,
+    double angle_min,
+    double angle_increment,
+    double range_min,
+    double range_max) const;
+
 private:
   void rebuildGeometry();
   void resetSubAccumulators();

@@ -3,14 +3,15 @@
 
 #include <memory>
 #include <mutex>
+#include <cmath>
 #include <string>
 #include <vector>
 
 #include "elevation_costmap/elevation_grid.hpp"
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -34,14 +35,21 @@ private:
     const sensor_msgs::msg::PointCloud2 & cloud,
     const geometry_msgs::msg::TransformStamped & tf,
     std::vector<PointXYZ> & out_points);
-  void publishCostmap(const rclcpp::Time & stamp);
+  void publishScan(const rclcpp::Time & stamp);
 
   GridConfig grid_config_;
   ElevationGrid grid_;
 
   std::string target_frame_;
   std::string cloud_topic_;
-  std::string costmap_topic_;
+  std::string scan_topic_;
+
+  // LaserScan (req. §4.1)
+  double angle_min_{-M_PI};
+  double angle_max_{M_PI};
+  double angle_increment_deg_{1.0};
+  double range_min_{0.1};
+  double range_max_{2.83};
 
   // ROI [m]
   double roi_x_min_{-2.0};
@@ -66,10 +74,11 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
-  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
 
   std::mutex mutex_;
   std::size_t processed_clouds_{0};
+  std::vector<float> scan_ranges_;
 };
 
 }  // namespace elevation_costmap
