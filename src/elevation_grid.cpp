@@ -35,9 +35,9 @@ void ElevationGrid::setConfig(const GridConfig & config)
 
 void ElevationGrid::rebuildGeometry()
 {
-  sub_width_ = static_cast<int>(std::lround(config_.map_size / config_.sub_resolution));
+  sub_width_ = static_cast<int>(std::lround(config_.grid_size / config_.resolution));
   sub_height_ = sub_width_;
-  plan_width_ = static_cast<int>(std::lround(config_.map_size / config_.plan_resolution));
+  plan_width_ = static_cast<int>(std::lround(config_.grid_size / config_.plan_resolution));
   // Prefer odd planning size so the robot sits near the map center (27 for 4.05 m).
   if (plan_width_ % 2 == 0) {
     ++plan_width_;
@@ -45,7 +45,7 @@ void ElevationGrid::rebuildGeometry()
   plan_height_ = plan_width_;
 
   pool_ = std::max(
-    1, static_cast<int>(std::lround(config_.plan_resolution / config_.sub_resolution)));
+    1, static_cast<int>(std::lround(config_.plan_resolution / config_.resolution)));
 
   const double plan_extent = plan_width_ * config_.plan_resolution;
   origin_x_ = -0.5 * plan_extent;
@@ -53,7 +53,7 @@ void ElevationGrid::rebuildGeometry()
 
   // Align sub-grid origin to the same lower-left; extend coverage to cover plan extent.
   const int needed_sub =
-    static_cast<int>(std::ceil(plan_extent / config_.sub_resolution));
+    static_cast<int>(std::ceil(plan_extent / config_.resolution));
   sub_width_ = std::max(sub_width_, needed_sub);
   sub_height_ = sub_width_;
 
@@ -89,7 +89,7 @@ void ElevationGrid::resetSubAccumulators()
 
 void ElevationGrid::accumulatePoints(const std::vector<PointXYZ> & points)
 {
-  const float res = static_cast<float>(config_.sub_resolution);
+  const float res = static_cast<float>(config_.resolution);
   const float ox = static_cast<float>(origin_x_);
   const float oy = static_cast<float>(origin_y_);
   const float x_max = ox + static_cast<float>(sub_width_) * res;
@@ -117,14 +117,14 @@ void ElevationGrid::accumulatePoints(const std::vector<PointXYZ> & points)
 
 void ElevationGrid::computeSubCosts()
 {
-  const float cell = static_cast<float>(config_.sub_resolution);
-  const float allow_rad = static_cast<float>(config_.slope_allow_deg * M_PI / 180.0);
+  const float cell = static_cast<float>(config_.resolution);
+  const float allow_rad = static_cast<float>(config_.max_slope_deg * M_PI / 180.0);
   const float tan_allow = std::tan(allow_rad);
   const float dh_min = static_cast<float>(config_.delta_h_min);
-  const float dh_max = static_cast<float>(config_.delta_h_max);
+  const float dh_max = static_cast<float>(config_.max_delta_h);
   const float gain = static_cast<float>(config_.cost_gain);
   const float lethal = static_cast<float>(config_.lethal_cost);
-  const int min_pts = config_.min_points_per_cell;
+  const int min_pts = config_.min_points;
 
   std::vector<float> mean_z(static_cast<std::size_t>(sub_width_ * sub_height_), 0.f);
 
@@ -320,8 +320,8 @@ void ElevationGrid::fillLaserScanRanges(
   const float init_r = static_cast<float>(range_max + 1.0);
   std::fill(ranges.begin(), ranges.end(), init_r);
 
-  const float dh_max = static_cast<float>(config_.delta_h_max);
-  const float res = static_cast<float>(config_.sub_resolution);
+  const float dh_max = static_cast<float>(config_.max_delta_h);
+  const float res = static_cast<float>(config_.resolution);
   const float ox = static_cast<float>(origin_x_);
   const float oy = static_cast<float>(origin_y_);
   const int n_beams = static_cast<int>(ranges.size());

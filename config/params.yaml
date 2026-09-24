@@ -1,31 +1,21 @@
 elevation_costmap_node:
   ros__parameters:
-    # Frames / topics (req. §2.2)
-    target_frame: base_link
-    cloud_topic: /livox/lidar
+    # Frames / topics
+    frame_id: base_link
+    pointcloud_topic: /livox/lidar
     scan_topic: /scan
 
-    # Grid (req. §3.1)
-    map_size: 4.0
-    sub_resolution: 0.05
-    plan_resolution: 0.15
+    # Elevation grid
+    grid_size: 6.0          # [m] square side length (robot-centered)
+    resolution: 0.05        # [m] cell size
 
-    # Obstacle threshold (req. §3.2)
-    delta_h_min: 0.03
-    delta_h_max: 0.15
-    cost_gain: 99.0
-    lethal_cost: 100
-
-    # Missing-cell fill (legacy plan grid)
-    temporal_decay: 0.85
-    unobserved_margin_cost: 50.0
-
-    # Slope vs step separation
+    # Obstacle detection
+    max_delta_h: 0.03       # [m] Δh above this → obstacle cell
+    min_points: 3           # ignore cells with fewer points
     enable_slope_correction: true
-    slope_allow_deg: 12.0
-    min_points_per_cell: 3
+    max_slope_deg: 12.0     # continuous slope below this is not an obstacle
 
-    # LaserScan (req. §4.1)
+    # LaserScan output
     scan:
       angle_min: -3.14159265359
       angle_max: 3.14159265359
@@ -33,23 +23,32 @@ elevation_costmap_node:
       range_min: 0.1
       range_max: 2.83
 
-    # ROI filter (req. §5)
+    # Point-cloud ROI in frame_id [m]
     roi:
       x_min: -2.0
       x_max: 2.0
       y_min: -2.0
       y_max: 2.0
-      z_ground_min: -0.5
-      z_robot_height: 1.5
+      z_min: -0.5
+      z_max: 1.5
 
-    # Robot body / mount self-filter AABB in target_frame
+    # Self-filter AABBs in frame_id [m] (x+: forward)
     self_filter:
-      enable: true
-      x_min: -0.35
-      x_max: 0.35
-      y_min: -0.25
-      y_max: 0.25
-      z_min: -0.1
-      z_max: 0.6
+      robot:                 # robot body / mount
+        enable: true
+        x_min: -0.40
+        x_max: 0.05
+        y_min: -0.30
+        y_max: 0.30
+        z_min: -0.1
+        z_max: 0.8
+      operator:              # trailing operator behind the robot
+        enable: true
+        x_min: -1.80
+        x_max: -0.40
+        y_min: -0.60
+        y_max: 0.60
+        z_min: -0.1
+        z_max: 1.8
 
-    tf_timeout_sec: 0.05
+    tf_timeout: 0.05        # [s]

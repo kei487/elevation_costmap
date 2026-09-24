@@ -19,6 +19,26 @@
 namespace elevation_costmap
 {
 
+/** Axis-aligned self-filter box in frame_id [m]. */
+struct SelfFilterBox
+{
+  bool enable{true};
+  double x_min{0.0};
+  double x_max{0.0};
+  double y_min{0.0};
+  double y_max{0.0};
+  double z_min{0.0};
+  double z_max{0.0};
+
+  bool contains(float x, float y, float z) const
+  {
+    return enable &&
+           x >= x_min && x <= x_max &&
+           y >= y_min && y <= y_max &&
+           z >= z_min && z <= z_max;
+  }
+};
+
 class ElevationCostmapNode : public rclcpp::Node
 {
 public:
@@ -27,6 +47,8 @@ public:
 private:
   void declareParameters();
   void loadParameters();
+  void declareSelfFilter(const std::string & prefix, const SelfFilterBox & defaults);
+  void loadSelfFilter(const std::string & prefix, SelfFilterBox & out);
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   bool transformCloud(
     const sensor_msgs::msg::PointCloud2 & cloud,
@@ -40,11 +62,11 @@ private:
   GridConfig grid_config_;
   ElevationGrid grid_;
 
-  std::string target_frame_;
-  std::string cloud_topic_;
+  std::string frame_id_;
+  std::string pointcloud_topic_;
   std::string scan_topic_;
 
-  // LaserScan (req. §4.1)
+  // LaserScan
   double angle_min_{-M_PI};
   double angle_max_{M_PI};
   double angle_increment_deg_{1.0};
@@ -56,19 +78,14 @@ private:
   double roi_x_max_{2.0};
   double roi_y_min_{-2.0};
   double roi_y_max_{2.0};
-  double z_ground_min_{-0.5};
-  double z_robot_height_{1.5};
+  double roi_z_min_{-0.5};
+  double roi_z_max_{1.5};
 
-  // Self-filter AABB in target frame [m]
-  bool enable_self_filter_{true};
-  double self_x_min_{-0.35};
-  double self_x_max_{0.35};
-  double self_y_min_{-0.25};
-  double self_y_max_{0.25};
-  double self_z_min_{-0.1};
-  double self_z_max_{0.6};
+  // Self-filter AABBs in frame_id [m]
+  SelfFilterBox robot_filter_;
+  SelfFilterBox operator_filter_;
 
-  double tf_timeout_sec_{0.05};
+  double tf_timeout_{0.05};
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

@@ -9,19 +9,22 @@ namespace elevation_costmap
 
 struct GridConfig
 {
-  double map_size{4.0};                 // [m] square side length
-  double sub_resolution{0.05};          // [m] internal aggregation
-  double plan_resolution{0.15};         // [m] planning output
-  double delta_h_min{0.03};             // [m] noise floor
-  double delta_h_max{0.15};             // [m] lethal threshold
-  double cost_gain{99.0};               // linear gain for OccupancyGrid 1..99
-  int8_t lethal_cost{100};              // lethal cell value
-  int8_t unknown_cost{-1};              // unobserved / blind-spot margin
-  double temporal_decay{0.85};          // retain previous cost when cell empty
-  double unobserved_margin_cost{50.0};  // safety cost for never-seen cells
+  // Exposed via params.yaml
+  double grid_size{4.0};                // [m] square side length
+  double resolution{0.05};              // [m] cell size
+  double max_delta_h{0.15};             // [m] obstacle threshold
   bool enable_slope_correction{true};
-  double slope_allow_deg{12.0};         // continuous slope below this is ignored
-  int min_points_per_cell{2};
+  double max_slope_deg{12.0};           // continuous slope below this is ignored
+  int min_points{3};                    // min points per cell
+
+  // Internal (legacy OccupancyGrid path; not parameterized)
+  double plan_resolution{0.15};
+  double delta_h_min{0.03};
+  double cost_gain{99.0};
+  int8_t lethal_cost{100};
+  int8_t unknown_cost{-1};
+  double temporal_decay{0.85};
+  double unobserved_margin_cost{50.0};
 };
 
 struct PointXYZ
@@ -32,7 +35,7 @@ struct PointXYZ
 };
 
 /**
- * @brief Dual-resolution elevation costmap (0.05 m sub-grid -> 0.15 m plan-grid).
+ * @brief Elevation grid for Δh obstacle detection and LaserScan projection.
  *
  * Robot-centered rolling grid in a levelled frame (base_link / odom).
  */
@@ -54,16 +57,15 @@ public:
   double originY() const { return origin_y_; }
 
   /**
-   * @brief Aggregate points, compute delta-h costs, downsample, apply temporal fill.
+   * @brief Aggregate points and compute per-cell Δh.
    * @param points Points already transformed into the map frame (robot-centered).
-   * @return Planning-grid costs (OccupancyGrid row-major: index = y * width + x).
    */
   const std::vector<int8_t> & update(const std::vector<PointXYZ> & points);
 
   const std::vector<int8_t> & planCosts() const { return plan_costs_; }
 
   /**
-   * @brief Build LaserScan ranges from obstacle cells (Δh > delta_h_max).
+   * @brief Build LaserScan ranges from obstacle cells (Δh > max_delta_h).
    *
    * Obstacle cell centers are projected to polar (r, φ); each beam keeps the
    * nearest range. Unhit beams are left as range_max + 1.0.
@@ -90,7 +92,7 @@ private:
   int plan_height_{0};
   double origin_x_{0.0};
   double origin_y_{0.0};
-  int pool_{3};  // plan_resolution / sub_resolution
+  int pool_{3};  // plan_resolution / resolution
 
   std::vector<float> z_min_;
   std::vector<float> z_max_;

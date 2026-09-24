@@ -71,37 +71,31 @@ ElevationCostmapNode::ElevationCostmapNode()
 
   const auto sensor_qos = rclcpp::SensorDataQoS();
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-    cloud_topic_, sensor_qos,
+    pointcloud_topic_, sensor_qos,
     std::bind(&ElevationCostmapNode::cloudCallback, this, std::placeholders::_1));
 
   RCLCPP_INFO(
     get_logger(),
     "elevation_costmap ready: cloud='%s' -> scan='%s' frame='%s' "
     "grid=%.2fm @ %.2fm (%dx%d) beams=%d angle_inc=%.2fdeg",
-    cloud_topic_.c_str(), scan_topic_.c_str(), target_frame_.c_str(),
-    grid_config_.map_size, grid_config_.sub_resolution,
+    pointcloud_topic_.c_str(), scan_topic_.c_str(), frame_id_.c_str(),
+    grid_config_.grid_size, grid_config_.resolution,
     grid_.subWidth(), grid_.subHeight(),
     n_beams, angle_increment_deg_);
 }
 
 void ElevationCostmapNode::declareParameters()
 {
-  declare_parameter<std::string>("target_frame", "base_link");
-  declare_parameter<std::string>("cloud_topic", "/livox/lidar");
+  declare_parameter<std::string>("frame_id", "base_link");
+  declare_parameter<std::string>("pointcloud_topic", "/livox/lidar");
   declare_parameter<std::string>("scan_topic", "/scan");
 
-  declare_parameter<double>("map_size", 4.0);
-  declare_parameter<double>("sub_resolution", 0.05);
-  declare_parameter<double>("plan_resolution", 0.15);
-  declare_parameter<double>("delta_h_min", 0.03);
-  declare_parameter<double>("delta_h_max", 0.15);
-  declare_parameter<double>("cost_gain", 99.0);
-  declare_parameter<int>("lethal_cost", 100);
-  declare_parameter<double>("temporal_decay", 0.85);
-  declare_parameter<double>("unobserved_margin_cost", 50.0);
+  declare_parameter<double>("grid_size", 4.0);
+  declare_parameter<double>("resolution", 0.05);
+  declare_parameter<double>("max_delta_h", 0.15);
+  declare_parameter<int>("min_points", 3);
   declare_parameter<bool>("enable_slope_correction", true);
-  declare_parameter<double>("slope_allow_deg", 12.0);
-  declare_parameter<int>("min_points_per_cell", 3);
+  declare_parameter<double>("max_slope_deg", 12.0);
 
   declare_parameter<double>("scan.angle_min", -M_PI);
   declare_parameter<double>("scan.angle_max", M_PI);
@@ -113,42 +107,57 @@ void ElevationCostmapNode::declareParameters()
   declare_parameter<double>("roi.x_max", 2.0);
   declare_parameter<double>("roi.y_min", -2.0);
   declare_parameter<double>("roi.y_max", 2.0);
-  declare_parameter<double>("roi.z_ground_min", -0.5);
-  declare_parameter<double>("roi.z_robot_height", 1.5);
+  declare_parameter<double>("roi.z_min", -0.5);
+  declare_parameter<double>("roi.z_max", 1.5);
 
-  declare_parameter<bool>("self_filter.enable", true);
-  declare_parameter<double>("self_filter.x_min", -0.35);
-  declare_parameter<double>("self_filter.x_max", 0.35);
-  declare_parameter<double>("self_filter.y_min", -0.25);
-  declare_parameter<double>("self_filter.y_max", 0.25);
-  declare_parameter<double>("self_filter.z_min", -0.1);
-  declare_parameter<double>("self_filter.z_max", 0.6);
+  declareSelfFilter(
+    "self_filter.robot",
+    SelfFilterBox{true, -0.40, 0.05, -0.30, 0.30, -0.1, 0.8});
+  declareSelfFilter(
+    "self_filter.operator",
+    SelfFilterBox{true, -1.50, -0.40, -0.40, 0.40, -0.1, 1.8});
 
-  declare_parameter<double>("tf_timeout_sec", 0.05);
+  declare_parameter<double>("tf_timeout", 0.05);
+}
+
+void ElevationCostmapNode::declareSelfFilter(
+  const std::string & prefix, const SelfFilterBox & defaults)
+{
+  declare_parameter<bool>(prefix + ".enable", defaults.enable);
+  declare_parameter<double>(prefix + ".x_min", defaults.x_min);
+  declare_parameter<double>(prefix + ".x_max", defaults.x_max);
+  declare_parameter<double>(prefix + ".y_min", defaults.y_min);
+  declare_parameter<double>(prefix + ".y_max", defaults.y_max);
+  declare_parameter<double>(prefix + ".z_min", defaults.z_min);
+  declare_parameter<double>(prefix + ".z_max", defaults.z_max);
+}
+
+void ElevationCostmapNode::loadSelfFilter(
+  const std::string & prefix, SelfFilterBox & out)
+{
+  out.enable = get_parameter(prefix + ".enable").as_bool();
+  out.x_min = get_parameter(prefix + ".x_min").as_double();
+  out.x_max = get_parameter(prefix + ".x_max").as_double();
+  out.y_min = get_parameter(prefix + ".y_min").as_double();
+  out.y_max = get_parameter(prefix + ".y_max").as_double();
+  out.z_min = get_parameter(prefix + ".z_min").as_double();
+  out.z_max = get_parameter(prefix + ".z_max").as_double();
 }
 
 void ElevationCostmapNode::loadParameters()
 {
-  target_frame_ = get_parameter("target_frame").as_string();
-  cloud_topic_ = get_parameter("cloud_topic").as_string();
+  frame_id_ = get_parameter("frame_id").as_string();
+  pointcloud_topic_ = get_parameter("pointcloud_topic").as_string();
   scan_topic_ = get_parameter("scan_topic").as_string();
 
-  grid_config_.map_size = get_parameter("map_size").as_double();
-  grid_config_.sub_resolution = get_parameter("sub_resolution").as_double();
-  grid_config_.plan_resolution = get_parameter("plan_resolution").as_double();
-  grid_config_.delta_h_min = get_parameter("delta_h_min").as_double();
-  grid_config_.delta_h_max = get_parameter("delta_h_max").as_double();
-  grid_config_.cost_gain = get_parameter("cost_gain").as_double();
-  grid_config_.lethal_cost =
-    static_cast<int8_t>(get_parameter("lethal_cost").as_int());
-  grid_config_.temporal_decay = get_parameter("temporal_decay").as_double();
-  grid_config_.unobserved_margin_cost =
-    get_parameter("unobserved_margin_cost").as_double();
+  grid_config_.grid_size = get_parameter("grid_size").as_double();
+  grid_config_.resolution = get_parameter("resolution").as_double();
+  grid_config_.max_delta_h = get_parameter("max_delta_h").as_double();
+  grid_config_.min_points =
+    static_cast<int>(get_parameter("min_points").as_int());
   grid_config_.enable_slope_correction =
     get_parameter("enable_slope_correction").as_bool();
-  grid_config_.slope_allow_deg = get_parameter("slope_allow_deg").as_double();
-  grid_config_.min_points_per_cell =
-    static_cast<int>(get_parameter("min_points_per_cell").as_int());
+  grid_config_.max_slope_deg = get_parameter("max_slope_deg").as_double();
 
   angle_min_ = get_parameter("scan.angle_min").as_double();
   angle_max_ = get_parameter("scan.angle_max").as_double();
@@ -160,18 +169,13 @@ void ElevationCostmapNode::loadParameters()
   roi_x_max_ = get_parameter("roi.x_max").as_double();
   roi_y_min_ = get_parameter("roi.y_min").as_double();
   roi_y_max_ = get_parameter("roi.y_max").as_double();
-  z_ground_min_ = get_parameter("roi.z_ground_min").as_double();
-  z_robot_height_ = get_parameter("roi.z_robot_height").as_double();
+  roi_z_min_ = get_parameter("roi.z_min").as_double();
+  roi_z_max_ = get_parameter("roi.z_max").as_double();
 
-  enable_self_filter_ = get_parameter("self_filter.enable").as_bool();
-  self_x_min_ = get_parameter("self_filter.x_min").as_double();
-  self_x_max_ = get_parameter("self_filter.x_max").as_double();
-  self_y_min_ = get_parameter("self_filter.y_min").as_double();
-  self_y_max_ = get_parameter("self_filter.y_max").as_double();
-  self_z_min_ = get_parameter("self_filter.z_min").as_double();
-  self_z_max_ = get_parameter("self_filter.z_max").as_double();
+  loadSelfFilter("self_filter.robot", robot_filter_);
+  loadSelfFilter("self_filter.operator", operator_filter_);
 
-  tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
+  tf_timeout_ = get_parameter("tf_timeout").as_double();
 }
 
 void ElevationCostmapNode::cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -210,17 +214,16 @@ bool ElevationCostmapNode::transformCloud(
   geometry_msgs::msg::TransformStamped tf;
   try {
     tf = tf_buffer_->lookupTransform(
-      target_frame_, cloud.header.frame_id, cloud.header.stamp,
-      rclcpp::Duration::from_seconds(tf_timeout_sec_));
+      frame_id_, cloud.header.frame_id, cloud.header.stamp,
+      rclcpp::Duration::from_seconds(tf_timeout_));
   } catch (const tf2::TransformException & ex) {
-    // Fallback: latest transform
     try {
       tf = tf_buffer_->lookupTransform(
-        target_frame_, cloud.header.frame_id, tf2::TimePointZero);
+        frame_id_, cloud.header.frame_id, tf2::TimePointZero);
     } catch (const tf2::TransformException & ex2) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
-        "TF %s <- %s failed: %s", target_frame_.c_str(),
+        "TF %s <- %s failed: %s", frame_id_.c_str(),
         cloud.header.frame_id.c_str(), ex2.what());
       return false;
     }
@@ -263,15 +266,13 @@ void ElevationCostmapNode::filterAndExtract(
 
     if (ox < roi_x_min_ || ox > roi_x_max_ ||
       oy < roi_y_min_ || oy > roi_y_max_ ||
-      oz < z_ground_min_ || oz > z_robot_height_)
+      oz < roi_z_min_ || oz > roi_z_max_)
     {
       continue;
     }
 
-    if (enable_self_filter_ &&
-      ox >= self_x_min_ && ox <= self_x_max_ &&
-      oy >= self_y_min_ && oy <= self_y_max_ &&
-      oz >= self_z_min_ && oz <= self_z_max_)
+    if (robot_filter_.contains(ox, oy, oz) ||
+      operator_filter_.contains(ox, oy, oz))
     {
       continue;
     }
@@ -289,7 +290,7 @@ void ElevationCostmapNode::publishScan(const rclcpp::Time & stamp)
 
   sensor_msgs::msg::LaserScan scan;
   scan.header.stamp = stamp;
-  scan.header.frame_id = target_frame_;
+  scan.header.frame_id = frame_id_;
   scan.angle_min = static_cast<float>(angle_min_);
   scan.angle_max = static_cast<float>(angle_max_);
   scan.angle_increment = static_cast<float>(angle_increment);
